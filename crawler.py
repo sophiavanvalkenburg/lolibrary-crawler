@@ -80,8 +80,8 @@ def clean_item_data(obj):
     return data
 
 def make_field_list(field):
-    return [f.strip() for f in field.split(",")]
-    
+    return [f.strip() for f in field.split(",") if f]
+
 def make_year(year):
     try:
         return int(year)
@@ -92,12 +92,17 @@ def make_price(price):
     extra, currency, price = price.partition(u"\xa5")
     return (extra + currency, price)
 
-def make_other_notes(notes):
-    pass 
+def get_images(soup):
+    image_links = []
+    pics_div = soup.find(class_="field-field-pics")
+    if pics_div:
+        images = pics_div.find_all("img")
+        image_links.extend([img.get("src") for img in images if img.get("src")])
+    return image_links
 
 def get_item_data(url):
     res = requests.get(url)
-    soup = BeautifulSoup(res.text)
+    soup = BeautifulSoup(res.text, "html.parser")
     title = clean_item_data(soup.find("h2", class_="title"))
     japanese_name = clean_item_data(soup.find(class_="field-field-altitle"))
     brand = clean_item_data(soup.find(class_="field-field-brand"))
@@ -114,7 +119,7 @@ def get_item_data(url):
     shoulder_width = clean_item_data(soup.find(class_="field-field-shopshoulderwidth"))
     sleeve_length = clean_item_data(soup.find(class_="field-field-shopsleevelength"))
     cuff = clean_item_data(soup.find(class_="field-field-shopcuff"))
-    main_image = soup.find(class_="imagefield-field_teaserimage").get("src") 
+    images = get_images(soup)
     return {
         "name":             title,
         "japanese_name":    japanese_name,
@@ -126,7 +131,7 @@ def get_item_data(url):
         "colorways":        make_field_list(colorways),
         "other_notes":      other_notes,
         "features":         make_field_list(features),
-        "image_main":       main_image,
+        "images":           images,
         "measurements":     {
             "bust":             bust,
             "waist":            waist,
@@ -136,6 +141,31 @@ def get_item_data(url):
             "cuff":             cuff
         },
     }
+
+def print_item_data(data):
+    for url, data in data.iteritems():
+        print url
+        print "\n",
+        for key, value in data.iteritems():
+            print "%s: " % key,
+            if not value:
+                print "\n",
+                continue
+            if type(value) is list:
+                print "\n",
+                for v in value:
+                    print "\t" + v
+            elif type(value) is dict:
+                print "\n",
+                for k, v in value.iteritems():
+                    print "\t%s: %s" % (k, v)
+            elif type(value) is tuple:
+                for v in value:
+                    print v,
+                print "\n",
+            else:
+                print value
+        print "\n\n",
 
 def main(args):
     parsed = get_parser().parse_args(args[1:])
@@ -155,7 +185,7 @@ def main(args):
             data = get_item_data(link)
             if data:
                 item_data[link] = data
-        pprint(item_data)
+        print_item_data(item_data)
         curr_page += 1
 
 if __name__ == "__main__":
