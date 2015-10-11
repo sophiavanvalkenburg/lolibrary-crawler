@@ -47,6 +47,9 @@ def link_is_valid(link):
 def make_absolute(link):
     return "http://www.lolibrary.org" + link.get("href")
 
+def is_shoe_page(url):
+    return "/shoes/" in url
+
 def scrape_search_page(res):
     soup = BeautifulSoup(res.text, "html.parser")
     links = soup.find_all(link_is_valid)
@@ -75,22 +78,12 @@ def clean_item_data(obj):
     if not obj:
         return ""
     data = obj.text
-    data = re.sub(r".*:", "", data) 
+    data = re.sub(r".*?:", "", data) 
     data = data.strip()
     return data
 
-def make_field_list(field):
-    return [f.strip() for f in field.split(",") if f]
-
-def make_year(year):
-    try:
-        return int(year)
-    except ValueError:
-        return 0
-
-def make_price(price):
-    extra, currency, price = price.partition(u"\xa5")
-    return (extra + currency, price)
+def make_field_list(field, delimiter=","):
+    return [f.strip() for f in field.split(delimiter) if f.strip()]
 
 def get_images(soup):
     image_links = []
@@ -100,46 +93,95 @@ def get_images(soup):
         image_links.extend([img.get("src") for img in images if img.get("src")])
     return image_links
 
-def get_item_data(url):
-    res = requests.get(url)
-    soup = BeautifulSoup(res.text, "html.parser")
-    title = clean_item_data(soup.find("h2", class_="title"))
-    japanese_name = clean_item_data(soup.find(class_="field-field-altitle"))
-    brand = clean_item_data(soup.find(class_="field-field-brand"))
-    product_number = clean_item_data(soup.find(class_="field-field-productnumber"))
-    item_type = clean_item_data(soup.find(class_="field-field-items"))
+def get_title(soup):
+    return clean_item_data(soup.find("h2", class_="title"))
+
+def get_japanese_name(soup):
+    return clean_item_data(soup.find(class_="field-field-altitle"))
+
+def get_brand(soup):
+    return clean_item_data(soup.find(class_="field-field-brand"))
+
+def get_product_number(soup, is_shoes):
+    if is_shoes:
+        class_ = "field-field-shoeprodnumb"
+    else:
+        class_ = "field-field-productnumber"
+    return clean_item_data(soup.find(class_=class_))
+
+def get_item_type(soup, is_shoe):
+    if is_shoe:
+        return "Shoes"
+    return clean_item_data(soup.find(class_="field-field-items"))
+
+def get_price(soup):
     price = clean_item_data(soup.find(class_="field-field-price"))
+    extra, currency, price = price.partition(u"\xa5")
+    return (extra + currency, price)
+
+def get_year(soup):
     year = clean_item_data(soup.find(class_="field-field-year"))
-    colorways = clean_item_data(soup.find(class_="field-field-colorways"))
-    other_notes = clean_item_data(soup.find(class_="field-field-featureshide"))
-    features = clean_item_data(soup.find(class_="field-field-features"))
+    try:
+        return int(year)
+    except ValueError:
+        return 0
+
+def get_colorways(soup, is_shoes):
+    if is_shoes:
+        class_ = "field-field-shoecolors"
+    else:
+        class_ = "field-field-colorways"
+    return make_field_list(clean_item_data(soup.find(class_=class_)), "\n")
+
+def get_other_notes(soup):
+    return clean_item_data(soup.find(class_="field-field-featureshide"))
+
+def get_features(soup):
+    return clean_item_data(soup.find(class_="field-field-features"))
+
+def get_measurements(soup):
     bust = clean_item_data(soup.find(class_="field-field-shopbust"))
     waist = clean_item_data(soup.find(class_="field-field-shopwaist"))
     length = clean_item_data(soup.find(class_="field-field-shoplength"))
     shoulder_width = clean_item_data(soup.find(class_="field-field-shopshoulderwidth"))
     sleeve_length = clean_item_data(soup.find(class_="field-field-shopsleevelength"))
     cuff = clean_item_data(soup.find(class_="field-field-shopcuff"))
-    images = get_images(soup)
+    shoe_height = clean_item_data(soup.find(class_="field-field-shoe-height"))
     return {
-        "name":             title,
-        "japanese_name":    japanese_name,
-        "brand":            brand,
-        "product_number":   product_number,
-        "item_type":        item_type,
-        "price":            make_price(price),
-        "year":             make_year(year),
-        "colorways":        make_field_list(colorways),
-        "other_notes":      other_notes,
-        "features":         make_field_list(features),
-        "images":           images,
-        "measurements":     {
             "bust":             bust,
             "waist":            waist,
             "length":           length,
             "shoulder_width":   shoulder_width,
             "sleeve_length":    sleeve_length,
-            "cuff":             cuff
-        },
+            "cuff":             cuff,
+            "shoe_height":      shoe_height
+        }
+
+def get_shoe_material(soup):
+    return clean_item_data(soup.find(class_="field-field-shoematerials"))
+
+def get_shoe_finishes(soup):
+    return clean_item_data(soup.find(class_="field-field-shoefinishes"))
+
+def get_item_data(url):
+    res = requests.get(url)
+    soup = BeautifulSoup(res.text, "html.parser")
+    item_is_shoe = is_shoe_page(url)
+    return {
+        "name":             get_title(soup),
+        "japanese_name":    get_japanese_name(soup),
+        "brand":            get_brand(soup),
+        "product_number":   get_product_number(soup, item_is_shoe),
+        "item_type":        get_item_type(soup, item_is_shoe),
+        "price":            get_price(soup),
+        "year":             get_year(soup),
+        "colors":        get_colorways(soup, item_is_shoe),
+        "other_notes":      get_other_notes(soup),
+        "features":         get_features(soup),
+        "images":           get_images(soup),
+        "measurements":     get_measurements(soup),
+        "shoe_material":    get_shoe_material(soup),
+        "shoe_finishes":    get_shoe_finishes(soup)
     }
 
 def print_item_data(data):
