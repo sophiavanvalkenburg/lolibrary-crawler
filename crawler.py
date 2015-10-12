@@ -9,7 +9,6 @@ import re
 import requests
 from bs4 import BeautifulSoup
 import argparse
-from pprint import pprint
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -140,21 +139,14 @@ def get_features(soup):
     return clean_item_data(soup.find(class_="field-field-features"))
 
 def get_measurements(soup):
-    bust = clean_item_data(soup.find(class_="field-field-shopbust"))
-    waist = clean_item_data(soup.find(class_="field-field-shopwaist"))
-    length = clean_item_data(soup.find(class_="field-field-shoplength"))
-    shoulder_width = clean_item_data(soup.find(class_="field-field-shopshoulderwidth"))
-    sleeve_length = clean_item_data(soup.find(class_="field-field-shopsleevelength"))
-    cuff = clean_item_data(soup.find(class_="field-field-shopcuff"))
-    shoe_height = clean_item_data(soup.find(class_="field-field-shoe-height"))
     return {
-            "bust":             bust,
-            "waist":            waist,
-            "length":           length,
-            "shoulder_width":   shoulder_width,
-            "sleeve_length":    sleeve_length,
-            "cuff":             cuff,
-            "shoe_height":      shoe_height
+            "bust":             clean_item_data(soup.find(class_="field-field-shopbust")),
+            "waist":            clean_item_data(soup.find(class_="field-field-shopwaist")),
+            "length":           clean_item_data(soup.find(class_="field-field-shoplength")),
+            "shoulder_width":   clean_item_data(soup.find(class_="field-field-shopshoulderwidth")),
+            "sleeve_length":    clean_item_data(soup.find(class_="field-field-shopsleevelength")),
+            "cuff":             clean_item_data(soup.find(class_="field-field-shopcuff"))
+            "shoe_height":      clean_item_data(soup.find(class_="field-field-shoe-height"))
         }
 
 def get_shoe_material(soup):
@@ -175,7 +167,7 @@ def get_item_data(url):
         "item_type":        get_item_type(soup, item_is_shoe),
         "price":            get_price(soup),
         "year":             get_year(soup),
-        "colors":        get_colorways(soup, item_is_shoe),
+        "colors":           get_colorways(soup, item_is_shoe),
         "other_notes":      get_other_notes(soup),
         "features":         get_features(soup),
         "images":           get_images(soup),
