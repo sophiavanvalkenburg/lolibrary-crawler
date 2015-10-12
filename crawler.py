@@ -9,6 +9,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 import argparse
+import pymongo
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -27,6 +28,20 @@ def get_parser():
             type=int,
             help="end crawling on this page",
             default=-1
+            )
+    parser.add_argument(
+            "-p",
+            "--persist",
+            dest="persist",
+            action="store_true",
+            help="persist the item data to the DB",
+            )
+    parser.add_argument(
+            "-t",
+            "--test-mode",
+            dest="test_mode",
+            action="store_true",
+            help="run in test mode (uses test DB)"
             )
     return parser
 
@@ -145,7 +160,7 @@ def get_measurements(soup):
             "length":           clean_item_data(soup.find(class_="field-field-shoplength")),
             "shoulder_width":   clean_item_data(soup.find(class_="field-field-shopshoulderwidth")),
             "sleeve_length":    clean_item_data(soup.find(class_="field-field-shopsleevelength")),
-            "cuff":             clean_item_data(soup.find(class_="field-field-shopcuff"))
+            "cuff":             clean_item_data(soup.find(class_="field-field-shopcuff")),
             "shoe_height":      clean_item_data(soup.find(class_="field-field-shoe-height"))
         }
 
@@ -160,6 +175,7 @@ def get_item_data(url):
     soup = BeautifulSoup(res.text, "html.parser")
     item_is_shoe = is_shoe_page(url)
     return {
+        "url":              url,
         "name":             get_title(soup),
         "japanese_name":    get_japanese_name(soup),
         "brand":            get_brand(soup),
@@ -177,10 +193,8 @@ def get_item_data(url):
     }
 
 def print_item_data(data):
-    for url, data in data.iteritems():
-        print url
-        print "\n",
-        for key, value in data.iteritems():
+    for item in data:
+        for key, value in item.iteritems():
             print "%s: " % key,
             if not value:
                 print "\n",
@@ -201,8 +215,29 @@ def print_item_data(data):
                 print value
         print "\n\n",
 
+def persist_data(db, data):
+    return db.items.insert_many(data)
+
+def set_up_db(run_in_test_mode):
+    try:
+        client = pymongo.MongoClient()
+        if run_in_test_mode:
+            db = client.lolibrary_test
+        else:
+            db = client.lolibrary
+        return db
+    except ConnectionFailure:
+        return None
+
 def main(args):
     parsed = get_parser().parse_args(args[1:])
+    if parsed.persist:
+        db = set_up_db(parsed.test_mode)
+        if db is None:
+            print "Failure to connect to DB: not persisting"
+    else:
+        print "Printing data to stdout"
+        db = None
     if parsed.end_page < 0:
         end_page = get_end_page(make_search_url(parsed.start_page))
         if end_page < 0:
@@ -214,12 +249,16 @@ def main(args):
         time.sleep(0.5)
         res = requests.get(make_search_url(curr_page))
         item_links = scrape_search_page(res)
-        item_data = {}
+        item_data = []
         for link in item_links:
             data = get_item_data(link)
             if data:
-                item_data[link] = data
-        print_item_data(item_data)
+                item_data.append(data)
+        if db:
+            res = persist_data(db, item_data)
+            print res.inserted_ids
+        else:
+            print_item_data(item_data)
         curr_page += 1
 
 if __name__ == "__main__":
