@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 import argparse
 import pymongo
 
+
 def get_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -42,6 +43,13 @@ def get_parser():
             dest="test_mode",
             action="store_true",
             help="run in test mode (uses test DB)"
+            )
+    parser.add_argument(
+            "-b",
+            "--bulk-load",
+            dest="bulk_load",
+            action="store_true",
+            help="add items to DB in bulk instead of one at a time",
             )
     return parser
 
@@ -170,6 +178,18 @@ def get_shoe_material(soup):
 def get_shoe_finishes(soup):
     return clean_item_data(soup.find(class_="field-field-shoefinishes"))
 
+def get_tags(soup):
+    all_links = soup.find_all("a")
+    tags = []
+    for link in all_links:
+        href = link.get("href")
+        if href and "/category/tags/" in href and link.text:
+            tags.append({
+                "name": link.text.lower().strip(),
+                "url":  make_absolute(link) 
+            })
+    return tags
+
 def get_item_data(url):
     res = requests.get(url)
     soup = BeautifulSoup(res.text, "html.parser")
@@ -189,7 +209,8 @@ def get_item_data(url):
         "images":           get_images(soup),
         "measurements":     get_measurements(soup),
         "shoe_material":    get_shoe_material(soup),
-        "shoe_finishes":    get_shoe_finishes(soup)
+        "shoe_finishes":    get_shoe_finishes(soup),
+        "tags":             get_tags(soup)
     }
 
 def print_item_data(data):
@@ -215,8 +236,23 @@ def print_item_data(data):
                 print value
         print "\n\n",
 
-def persist_data(db, data):
-    return db.items.insert_many(data)
+def write_data(db, data, bulk_load=False):
+    if not db:
+        print_item_data(data)
+        return len(data)
+    try:
+        if bulk_load:
+            db.items.insert_many(data)
+            written = len(data)
+        else:
+            written = 0
+            for d in data:
+                db.items.insert_one(d)
+                written += 1
+        return written
+    except pymongo.errors.PyMongoError as e:
+        print "persisting failed: %s" % e.message
+    return 0
 
 def set_up_db(run_in_test_mode):
     try:
@@ -225,6 +261,9 @@ def set_up_db(run_in_test_mode):
             db = client.lolibrary_test
         else:
             db = client.lolibrary
+        index_info = db.items.index_information()
+        if "url" not in index_info.keys():
+            db.items.create_index("url", unique=True)
         return db
     except ConnectionFailure:
         return None
@@ -232,9 +271,10 @@ def set_up_db(run_in_test_mode):
 def main(args):
     parsed = get_parser().parse_args(args[1:])
     if parsed.persist:
+        print "Connecting to DB for persisting data..."
         db = set_up_db(parsed.test_mode)
         if db is None:
-            print "Failure to connect to DB: not persisting"
+            print "Failure to connect to DB: printing to stdout instead"
     else:
         print "Printing data to stdout"
         db = None
@@ -244,22 +284,27 @@ def main(args):
             end_page = parsed.start_page
     else:
         end_page = parsed.end_page
+    written_items = 0
+    all_items = []
     curr_page = parsed.start_page
     while curr_page <= end_page: 
-        time.sleep(0.5)
-        res = requests.get(make_search_url(curr_page))
+        time.sleep(0.25)
+        url = make_search_url(curr_page)
+        print "Processing %s\n" % url
+        res = requests.get(url)
         item_links = scrape_search_page(res)
-        item_data = []
         for link in item_links:
             data = get_item_data(link)
             if data:
-                item_data.append(data)
-        if db:
-            res = persist_data(db, item_data)
-            print res.inserted_ids
-        else:
-            print_item_data(item_data)
+                if parsed.bulk_load:
+                    all_items.append(data)
+                else:
+                    written_items += write_data(db, [data], bulk_load=False)
         curr_page += 1
+    if parsed.bulk_load:
+        print "Attempting to bulk write %d items..." % len(all_items)
+        written_items = write_data(db, all_items, bulk_load=True)
+    print "Wrote data for %d items." % written_items
 
 if __name__ == "__main__":
     main(sys.argv)
