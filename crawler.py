@@ -6,6 +6,7 @@ crawls lolibrary.org for new items
 import time
 import sys
 import re
+import datetime
 import requests
 from bs4 import BeautifulSoup
 import argparse
@@ -101,8 +102,7 @@ def clean_item_data(obj):
         return ""
     data = obj.text
     data = re.sub(r".*?:", "", data) 
-    data = data.strip()
-    return data
+    return data.strip()
 
 def make_field_list(field, delimiter=","):
     return [f.strip() for f in field.split(delimiter) if f.strip()]
@@ -122,7 +122,7 @@ def get_japanese_name(soup):
     return clean_item_data(soup.find(class_="field-field-altitle"))
 
 def get_brand(soup):
-    return clean_item_data(soup.find(class_="field-field-brand"))
+    return clean_item_data(soup.find(class_="field-field-brand")).lower()
 
 def get_product_number(soup, is_shoes):
     if is_shoes:
@@ -134,12 +134,28 @@ def get_product_number(soup, is_shoes):
 def get_item_type(soup, is_shoe):
     if is_shoe:
         return "Shoes"
-    return clean_item_data(soup.find(class_="field-field-items"))
+    return clean_item_data(soup.find(class_="field-field-items")).lower()
 
 def get_price(soup):
     price = clean_item_data(soup.find(class_="field-field-price"))
-    extra, currency, price = price.partition(u"\xa5")
-    return (extra + currency, price)
+    extra, currency, amount = price.partition(u"\xa5")
+    if currency:
+        currency_type = "jpy"
+    else:
+        currency_type = "unk"
+        m = re.search(r"\d+(,?\d+)*", amount)
+        if m:
+            amount = m.group()
+        else:
+            amount = "0"
+    try:
+        amount_num = float(amount.replace(",", ""))
+    except ValueError:
+        amount_num = 0
+    return {
+        "currency": currency_type,
+        "amount": amount_num
+        }
 
 def get_year(soup):
     year = clean_item_data(soup.find(class_="field-field-year"))
@@ -151,15 +167,19 @@ def get_year(soup):
 def get_colorways(soup, is_shoes):
     if is_shoes:
         class_ = "field-field-shoecolors"
+        delimiter = "\n"
     else:
         class_ = "field-field-colorways"
-    return make_field_list(clean_item_data(soup.find(class_=class_)), "\n")
+        delimiter = ","
+    colorways_field = clean_item_data(soup.find(class_=class_)).lower()
+    return make_field_list(colorways_field, delimiter)
 
 def get_other_notes(soup):
     return clean_item_data(soup.find(class_="field-field-featureshide"))
 
 def get_features(soup):
-    return clean_item_data(soup.find(class_="field-field-features"))
+    features_field = soup.find(class_="field-field-features")
+    return make_field_list(clean_item_data(features_field).lower())
 
 def get_measurements(soup):
     return {
@@ -173,10 +193,15 @@ def get_measurements(soup):
         }
 
 def get_shoe_material(soup):
-    return clean_item_data(soup.find(class_="field-field-shoematerials"))
+    material_field = soup.find(class_="field-field-shoematerials")
+    return clean_item_data(material_field).lower()
 
 def get_shoe_finishes(soup):
-    return clean_item_data(soup.find(class_="field-field-shoefinishes"))
+    finishes_field = soup.find(class_="field-field-shoefinishes") 
+    return clean_item_data(finishes_field).lower()
+
+def get_shoe_soles(soup):
+    return clean_item_data(soup.find(class_="field-field-shoesoles")).lower()
 
 def get_tags(soup):
     all_links = soup.find_all("a")
@@ -185,15 +210,33 @@ def get_tags(soup):
         href = link.get("href")
         if href and "/category/tags/" in href and link.text:
             tags.append({
-                "name": link.text.lower().strip(),
+                "name": clean_item_data(link).lower(),
                 "url":  make_absolute(link) 
             })
     return tags
+
+def get_submitted_by_and_pub_date(soup):
+    submitted = soup.find(class_="submitted")
+    if submitted and submitted.text:
+        m = re.search(r"^Submitted by (.*?) on (.*)$", submitted.text)
+        if m:
+            submitted_by = m.group(1)
+            raw_pub_date = m.group(2)
+            try:
+                pub_date = datetime.datetime.strptime(
+                        raw_pub_date, 
+                        "%a, %m/%d/%Y - %H:%M"
+                        )
+            except ValueError:
+                pub_date = None
+            return submitted_by, pub_date
+    return "", None
 
 def get_item_data(url):
     res = requests.get(url)
     soup = BeautifulSoup(res.text, "html.parser")
     item_is_shoe = is_shoe_page(url)
+    submitted_by, pub_date = get_submitted_by_and_pub_date(soup)
     return {
         "url":              url,
         "name":             get_title(soup),
@@ -210,7 +253,10 @@ def get_item_data(url):
         "measurements":     get_measurements(soup),
         "shoe_material":    get_shoe_material(soup),
         "shoe_finishes":    get_shoe_finishes(soup),
-        "tags":             get_tags(soup)
+        "shoe_soles":       get_shoe_soles(soup),
+        "tags":             get_tags(soup),
+        "submitted_by":     submitted_by,
+        "pub_date":         pub_date
     }
 
 def print_item_data(data):
